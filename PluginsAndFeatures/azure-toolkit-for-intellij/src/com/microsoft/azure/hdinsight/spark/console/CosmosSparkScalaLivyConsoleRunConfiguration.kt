@@ -22,14 +22,20 @@
 
 package com.microsoft.azure.hdinsight.spark.console
 
+import com.intellij.execution.ExecutionException
 import com.intellij.execution.Executor
+import com.intellij.execution.configurations.ConfigurationPerRunnerSettings
 import com.intellij.execution.configurations.RunProfileState
+import com.intellij.execution.configurations.RunnerSettings
 import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.execution.runners.ExecutionEnvironment
+import com.intellij.execution.runners.ProgramRunner
 import com.intellij.openapi.project.Project
-import com.microsoft.azure.hdinsight.sdk.common.azure.serverless.AzureSparkServerlessCluster
-import com.microsoft.azure.hdinsight.sdk.common.azure.serverless.AzureSparkServerlessClusterManager
+import com.microsoft.azure.hdinsight.sdk.common.azure.serverless.AzureSparkCosmosCluster
+import com.microsoft.azure.hdinsight.sdk.common.azure.serverless.AzureSparkCosmosClusterManager
 import com.microsoft.azure.hdinsight.sdk.common.livy.interactive.ServerlessSparkSession
+import com.microsoft.azure.hdinsight.sdk.rest.azure.serverless.spark.models.SparkItemGroupState
+import com.microsoft.azure.hdinsight.spark.common.CosmosSparkSubmitModel
 import com.microsoft.azure.hdinsight.spark.run.configuration.LivySparkBatchJobRunConfiguration
 import java.net.URI
 
@@ -43,7 +49,8 @@ class CosmosSparkScalaLivyConsoleRunConfiguration(project: Project,
     override val runConfigurationTypeName = "Azure Data Lake Spark Run Configuration"
 
     override fun getState(executor: Executor, env: ExecutionEnvironment): RunProfileState? {
-        val sparkCluster = cluster as? AzureSparkServerlessCluster ?: return null
+        val sparkCluster = cluster as? AzureSparkCosmosCluster ?: throw ExecutionException(RuntimeConfigurationError(
+                "Can't prepare Spark Cosmos interactive session since the target account isn't set or found"))
 
         val livyUrl = (sparkCluster.livyUri?.toString() ?: return null).trimEnd('/') + "/"
 
@@ -56,11 +63,19 @@ class CosmosSparkScalaLivyConsoleRunConfiguration(project: Project,
         return SparkScalaLivyConsoleRunProfileState(SparkScalaConsoleBuilder(project), session)
     }
 
-    override fun checkSettingsBeforeRun() {
-        cluster = AzureSparkServerlessClusterManager
+    override fun checkRunnerSettings(runner: ProgramRunner<*>, runnerSettings: RunnerSettings?, configurationPerRunnerSettings: ConfigurationPerRunnerSettings?) {
+        val cosmosSparkSubmitModel = (submitModel as? CosmosSparkSubmitModel)
+                ?: throw RuntimeConfigurationError("Can't cast submitModel to CosmosSparkSubmitModel")
+
+        val adlAccount = cosmosSparkSubmitModel?.accountName
+                ?: throw RuntimeConfigurationError("The target cluster name is not selected")
+
+        cluster = AzureSparkCosmosClusterManager
                 .getInstance()
+                .getAccountByName(adlAccount)
                 .clusters
-                .find { it.name == this.clusterName }
-                ?:throw RuntimeConfigurationError("Can't find the target cluster $clusterName")
+                .find { it.name == this.clusterName &&
+                        (it as AzureSparkCosmosCluster).clusterStateForShow.equals(SparkItemGroupState.STABLE.toString(), ignoreCase = true )}
+                ?:throw RuntimeConfigurationError("Can't find the workable(STABLE) target cluster $clusterName@$adlAccount")
     }
 }

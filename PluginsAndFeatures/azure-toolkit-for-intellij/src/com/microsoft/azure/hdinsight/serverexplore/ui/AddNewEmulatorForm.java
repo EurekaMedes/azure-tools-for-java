@@ -14,11 +14,14 @@ import com.microsoft.azure.hdinsight.sdk.cluster.EmulatorClusterDetail;
 import com.microsoft.azure.hdinsight.sdk.common.HttpResponse;
 import com.microsoft.azure.hdinsight.serverexplore.hdinsightnode.HDInsightRootModule;
 import com.microsoft.azure.hdinsight.spark.common.SparkBatchSubmission;
+import com.microsoft.azuretools.azurecommons.helpers.NotNull;
+import com.microsoft.azuretools.azurecommons.helpers.Nullable;
 import com.microsoft.azuretools.azurecommons.helpers.StringHelper;
 import com.microsoft.azuretools.telemetry.AppInsightsClient;
+import com.microsoft.azuretools.telemetry.TelemetryConstants;
+import com.microsoft.azuretools.telemetrywrapper.EventType;
+import com.microsoft.azuretools.telemetrywrapper.EventUtil;
 import com.microsoft.intellij.hdinsight.messages.HDInsightBundle;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.event.ActionEvent;
@@ -84,6 +87,12 @@ public class AddNewEmulatorForm extends DialogWrapper {
 
         this.setModal(true);
         addActionListener();
+    }
+
+    @Nullable
+    @Override
+    public JComponent getPreferredFocusedComponent() {
+        return clusterNameField;
     }
 
     private void addActionListener() {
@@ -189,6 +198,8 @@ public class AddNewEmulatorForm extends DialogWrapper {
         ambariEndpoint = ambariEndpointField.getText().trim().replaceAll("/+$","");
 
         AppInsightsClient.create(HDInsightBundle.message("HDInsightCreateLocalEmulator"), null);
+        EventUtil.logEvent(EventType.info, TelemetryConstants.HDINSIGHT,
+            HDInsightBundle.message("HDInsightCreateLocalEmulator"), null);
         try {
             host = new URI(sshEndpoint).getHost();
             sshPort = new URI(sshEndpoint).getPort();
@@ -231,7 +242,7 @@ public class AddNewEmulatorForm extends DialogWrapper {
         if (isCarryOnNextStep) {
             EmulatorClusterDetail emulatorClusterDetail = new EmulatorClusterDetail(clusterName, userName, password,livyEndpoint, sshEndpoint, sparkHistoryEndpoint, ambariEndpoint);
             ClusterManagerEx.getInstance().addEmulatorCluster(emulatorClusterDetail);
-            hdInsightModule.refreshWithoutAsync();
+            hdInsightModule.load(false);
             SwingUtilities.invokeLater(new Runnable() {
                 @Override
                 public void run() {

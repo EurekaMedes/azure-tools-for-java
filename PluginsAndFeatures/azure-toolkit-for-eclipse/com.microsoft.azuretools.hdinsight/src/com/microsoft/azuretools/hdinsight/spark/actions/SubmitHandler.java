@@ -19,6 +19,9 @@
  */
 package com.microsoft.azuretools.hdinsight.spark.actions;
 
+import static com.microsoft.azuretools.telemetry.TelemetryConstants.HDINSIGHT;
+import com.microsoft.azuretools.telemetrywrapper.EventType;
+import com.microsoft.azuretools.telemetrywrapper.EventUtil;
 import java.util.List;
 
 import org.eclipse.core.commands.ExecutionEvent;
@@ -58,6 +61,7 @@ public class SubmitHandler extends AzureAbstractHandler {
                     }
                     
                     AppInsightsClient.create(Messages.SparkSubmissionRightClickProject, Activator.getDefault().getBundle().getVersion().toString());
+                    EventUtil.logEvent(EventType.info, HDINSIGHT, Messages.SparkSubmissionRightClickProject, null);
                     HDInsightUtil.showInfoOnSubmissionMessageWindow("List spark clusters ...");
                     
                     cachedClusterDetails = ClusterManagerEx.getInstance().getClusterDetailsWithoutAsync(true);
@@ -70,7 +74,7 @@ public class SubmitHandler extends AzureAbstractHandler {
                     } else {
                         HDInsightUtil.showErrorMessageOnSubmissionMessageWindow("Error : Failed to list spark clusters.");
                     }
-                    if (ClusterManagerEx.getInstance().isLIstAdditionalClusterSuccess()) {
+                    if (ClusterManagerEx.getInstance().isListAdditionalClusterSuccess()) {
                         HDInsightUtil.showInfoOnSubmissionMessageWindow("List additional spark clusters successfully");
                     } else {
                         HDInsightUtil.showErrorMessageOnSubmissionMessageWindow("Error: Failed to list additional cluster");

@@ -25,14 +25,16 @@ package com.microsoft.azure.hdinsight.spark.common;
 import com.microsoft.azuretools.azurecommons.helpers.NotNull;
 import rx.Observable;
 
+import java.io.File;
+
 public interface Deployable {
     /**
      * Deploy the job artifact into cluster
      *
-     * @param artifactPath the artifact to deploy
+     * @param src the artifact to deploy
      * @return Observable: upload path
      *         Observable Error: IOException;
      */
     @NotNull
-    Observable<String> deploy(@NotNull String artifactPath);
+    Observable<String> deploy(@NotNull File src);
 }

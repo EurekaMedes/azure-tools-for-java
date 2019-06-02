@@ -22,23 +22,30 @@
 package com.microsoft.azure.hdinsight.sdk.cluster;
 
 import com.microsoft.azure.hdinsight.common.ClusterManagerEx;
+import com.microsoft.azure.hdinsight.common.logger.ILogger;
+import com.microsoft.azure.hdinsight.sdk.cluster.HDInsightNewAPI.ClusterOperationNewAPIImpl;
+import com.microsoft.azure.hdinsight.sdk.cluster.HDInsightNewAPI.HDInsightUserRoleType;
 import com.microsoft.azure.hdinsight.sdk.common.HDIException;
-import com.microsoft.azure.hdinsight.sdk.storage.ADLSStorageAccount;
-import com.microsoft.azure.hdinsight.sdk.storage.HDStorageAccount;
-import com.microsoft.azure.hdinsight.sdk.storage.IHDIStorageAccount;
+import com.microsoft.azure.hdinsight.sdk.storage.*;
+import com.microsoft.azure.hdinsight.spark.common.SparkSubmitStorageType;
+import com.microsoft.azure.hdinsight.spark.common.SparkSubmitStorageTypeOptionsForCluster;
 import com.microsoft.azuretools.authmanage.models.SubscriptionDetail;
 import com.microsoft.azuretools.azurecommons.helpers.AzureCmdException;
+import com.microsoft.azuretools.azurecommons.helpers.NotNull;
+import com.microsoft.azuretools.azurecommons.helpers.Nullable;
+import com.microsoft.azuretools.telemetry.AppInsightsClient;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
+public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster, ILogger {
 
     private static final String ADL_HOME_PREFIX = "adl://home";
     private static final String ADLS_HOME_HOST_NAME = "dfs.adls.home.hostname";
@@ -48,25 +55,36 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
     private final String DefaultFS = "fs.defaultFS";
     private final String FSDefaultName = "fs.default.name";
     private final String StorageAccountKeyPrefix = "fs.azure.account.key.";
-    private final String StorageAccountNamePattern = "^wasb[s]?://(.*)@(.*)$";
     private final String ResourceGroupStartTag = "resourceGroups/";
     private final String ResourceGroupEndTag = "/providers/";
 
     private SubscriptionDetail subscription;
     private ClusterRawInfo clusterRawInfo;
+    private IClusterOperation clusterOperation;
 
     private int dataNodes;
+    @Nullable
     private String userName;
+    @Nullable
     private String passWord;
     private IHDIStorageAccount defaultStorageAccount;
     private List<HDStorageAccount> additionalStorageAccounts;
-
     private boolean isConfigInfoAvailable = false;
+    @Nullable
+    private Map<String, String> coresiteMap = null;
 
-    public ClusterDetail(SubscriptionDetail paramSubscription, ClusterRawInfo paramClusterRawInfo){
+    public ClusterDetail(SubscriptionDetail paramSubscription,
+                         ClusterRawInfo paramClusterRawInfo,
+                         IClusterOperation clusterOperation){
         this.subscription = paramSubscription;
         this.clusterRawInfo = paramClusterRawInfo;
+        this.clusterOperation = clusterOperation;
         ExtractInfoFromComputeProfile();
+    }
+
+    public boolean isRoleTypeReader() {
+        return clusterOperation instanceof ClusterOperationNewAPIImpl
+                && ((ClusterOperationNewAPIImpl) clusterOperation).getRoleType() == HDInsightUserRoleType.READER;
     }
 
     public boolean isEmulator () { return false; }
@@ -81,10 +99,23 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
 
     @Override
     public String getTitle() {
-        return Optional.ofNullable(getSparkVersion())
-                .filter(ver -> !ver.trim().isEmpty())
-                .map(ver -> getName() + " (Spark: " + ver + ")")
-                .orElse(getName());
+        StringBuilder titleStringBuilder = new StringBuilder(getName());
+
+        String sparkVersion = getSparkVersion();
+        if (StringUtils.isNotBlank(sparkVersion)) {
+            titleStringBuilder.append(String.format(" (Spark: %s)", sparkVersion));
+        }
+
+        if (ClusterManagerEx.getInstance().isHdiReaderCluster(this)) {
+            titleStringBuilder.append(" (Role: Reader)");
+        }
+
+        String state = getState();
+        if (StringUtils.isNotBlank(state) && !state.equalsIgnoreCase("Running")) {
+            titleStringBuilder.append(String.format(" (State: %s)", state));
+        }
+
+        return titleStringBuilder.toString();
     }
 
     @Override
@@ -131,14 +162,18 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
         return clusterProperties == null ? null : clusterProperties.getCreatedDate();
     }
 
-    public ClusterType getType(){
+    public static ClusterType getType(@NotNull ClusterRawInfo clusterRawInfo) {
         ClusterType type =  null;
         try {
-            type = ClusterType.valueOf(this.clusterRawInfo.getProperties().getClusterDefinition().getKind().toLowerCase());
+            type = ClusterType.valueOf(clusterRawInfo.getProperties().getClusterDefinition().getKind().toLowerCase());
         } catch (IllegalArgumentException e) {
             type = ClusterType.unkown;
         }
         return type == null ? ClusterType.unkown : type;
+    }
+
+    public ClusterType getType(){
+        return getType(this.clusterRawInfo);
     }
 
     public String getResourceGroup(){
@@ -166,37 +201,60 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
         return dataNodes;
     }
 
-    public String getHttpUserName() throws HDIException {
-        if(userName == null){
-            throw new HDIException("username is null, please call getConfigurationInfo first");
+    @Nullable
+    public String getHttpUserName() {
+        try {
+            getConfigurationInfo();
+        } catch (Exception ex) {
+            log().warn("Error getting cluster configuration info. Cluster Name: " + getName());
+            log().warn(ExceptionUtils.getStackTrace(ex));
+        } finally {
+            return userName;
         }
-
-        return userName;
     }
 
-    public String getHttpPassword() throws HDIException{
-        if(passWord == null){
-            throw new HDIException("passWord is null, please call getConfigurationInfo first");
+    @Nullable
+    public String getHttpPassword() {
+        try {
+            getConfigurationInfo();
+        } catch (Exception ex) {
+            log().warn("Error getting cluster configuration info. Cluster Name: " + getName());
+            log().warn(ExceptionUtils.getStackTrace(ex));
+        } finally {
+            return passWord;
         }
-
-        return passWord;
     }
 
-    public String getOSType(){
-        ClusterProperties clusterProperties = this.clusterRawInfo.getProperties();
+    public static String getOSType(@NotNull ClusterRawInfo clusterRawInfo) {
+        ClusterProperties clusterProperties = clusterRawInfo.getProperties();
         return clusterProperties == null ? null : clusterProperties.getOsType();
     }
 
-    public IHDIStorageAccount getStorageAccount() throws HDIException{
-        if(defaultStorageAccount == null){
-            throw new HDIException("default storage account is null, please call getConfigurationInfo first");
-        }
+    public String getOSType(){
+        return getOSType(this.clusterRawInfo);
+    }
 
-        return this.defaultStorageAccount;
+    @Nullable
+    public IHDIStorageAccount getStorageAccount() {
+        try {
+            getConfigurationInfo();
+        } catch (Exception ex) {
+            log().warn("Error getting cluster configuration info. Cluster Name: " + getName());
+            log().warn(ExceptionUtils.getStackTrace(ex));
+        } finally {
+            return defaultStorageAccount;
+        }
     }
 
     public List<HDStorageAccount> getAdditionalStorageAccounts(){
-        return this.additionalStorageAccounts;
+        try {
+            getConfigurationInfo();
+        } catch (Exception ex) {
+            log().warn("Error getting cluster configuration info. Cluster Name: " + getName());
+            log().warn(ExceptionUtils.getStackTrace(ex));
+        } finally {
+            return additionalStorageAccounts;
+        }
     }
 
     private void ExtractInfoFromComputeProfile(){
@@ -210,70 +268,142 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
     }
 
     public void getConfigurationInfo() throws IOException, HDIException, AzureCmdException {
-        IClusterOperation clusterOperation = new ClusterOperationImpl();
-        ClusterConfiguration clusterConfiguration =
-                clusterOperation.getClusterConfiguration(subscription, clusterRawInfo.getId());
-        if(clusterConfiguration != null && clusterConfiguration.getConfigurations() != null){
-            Configurations configurations = clusterConfiguration.getConfigurations();
-            Gateway gateway = configurations.getGateway();
-            if(gateway != null){
-                this.userName = gateway.getUsername();
-                this.passWord = gateway.getPassword();
-            }
+        // If exception happens, isConfigInfoAvailable is still false, which means
+        // next time we call getConfigurationInfo(), load configuration codes will still be executed.
+        if (!isConfigInfoAvailable()) {
+            synchronized (this) {
+                if (!isConfigInfoAvailable()) {
+                    ClusterConfiguration clusterConfiguration =
+                            clusterOperation.getClusterConfiguration(subscription, clusterRawInfo.getId());
+                    if (clusterConfiguration != null && clusterConfiguration.getConfigurations() != null) {
+                        Configurations configurations = clusterConfiguration.getConfigurations();
+                        Gateway gateway = configurations.getGateway();
+                        if (gateway != null) {
+                            this.userName = gateway.getUsername();
+                            this.passWord = gateway.getPassword();
+                        }
 
-            Map<String,String> coresSiteMap = configurations.getCoresite();
-            ClusterIdentity clusterIdentity = configurations.getClusterIdentity();
-            if(coresSiteMap!= null){
-                this.defaultStorageAccount = getDefaultStorageAccount(coresSiteMap, clusterIdentity);
-                this.additionalStorageAccounts = getAdditionalStorageAccounts(coresSiteMap);
+                        Map<String, String> coresSiteMap = configurations.getCoresite();
+                        ClusterIdentity clusterIdentity = configurations.getClusterIdentity();
+                        if (coresSiteMap != null) {
+                            this.coresiteMap = coresSiteMap;
+                            this.defaultStorageAccount = getDefaultStorageAccount(coresSiteMap, clusterIdentity);
+                            this.additionalStorageAccounts = getAdditionalStorageAccounts(coresSiteMap);
+                        }
+                    }
+
+                    isConfigInfoAvailable = true;
+                }
             }
         }
-
-        isConfigInfoAvailable = true;
     }
 
-    private IHDIStorageAccount getDefaultStorageAccount(Map<String, String> coresiteMap, ClusterIdentity clusterIdentity) throws HDIException{
+    @Nullable
+    public String getDefaultStorageRootPath() {
+        log().info("Cluster ID: " + clusterRawInfo.getId());
+        Map<String, String> requestedCoresiteMap = null;
+
+        try {
+            if (!(clusterOperation instanceof ClusterOperationNewAPIImpl)) {
+                requestedCoresiteMap = this.coresiteMap;
+            } else {
+                requestedCoresiteMap =
+                        ((ClusterOperationNewAPIImpl) clusterOperation).getClusterCoreSiteRequest(clusterRawInfo.getId())
+                                .toBlocking()
+                                .singleOrDefault(null);
+            }
+
+            if (requestedCoresiteMap == null) {
+                log().warn("Error getting cluster core-site. coresiteMap is null.");
+                return null;
+            }
+        } catch (Exception ex) {
+            log().warn("Error getting cluster core-site. " + ExceptionUtils.getStackTrace(ex));
+            return null;
+        }
+
         String containerAddress = null;
-        if(coresiteMap.containsKey(DefaultFS)){
-            containerAddress = coresiteMap.get(DefaultFS);
-        }else if(coresiteMap.containsKey(FSDefaultName)){
-            containerAddress = coresiteMap.get(FSDefaultName);
+        if (requestedCoresiteMap.containsKey(DefaultFS)) {
+            containerAddress = requestedCoresiteMap.get(DefaultFS);
+        } else if (requestedCoresiteMap.containsKey(FSDefaultName)) {
+            containerAddress = requestedCoresiteMap.get(FSDefaultName);
+        } else {
+            log().warn("Error getting cluster default storage account. containerAddress is null.");
+            return null;
         }
 
-        if(containerAddress == null){
-            throw new HDIException("Failed to get default storage account");
-        }
-
-        //for adls
-        if(ADL_HOME_PREFIX.equalsIgnoreCase(containerAddress)) {
+        String scheme = URI.create(containerAddress).getScheme();
+        if (ADL_HOME_PREFIX.equalsIgnoreCase(containerAddress)) {
             String accountName = "";
             String defaultRootPath = "";
-            if(coresiteMap.containsKey(ADLS_HOME_HOST_NAME)) {
-                accountName = coresiteMap.get(ADLS_HOME_HOST_NAME).split("\\.")[0];
+
+            if (requestedCoresiteMap.containsKey(ADLS_HOME_HOST_NAME)) {
+                accountName = requestedCoresiteMap.get(ADLS_HOME_HOST_NAME).split("\\.")[0];
             }
-            if(coresiteMap.containsKey(ADLS_HOME_MOUNTPOINT)) {
-                defaultRootPath = coresiteMap.get(ADLS_HOME_MOUNTPOINT);
+            if (requestedCoresiteMap.containsKey(ADLS_HOME_MOUNTPOINT)) {
+                defaultRootPath = requestedCoresiteMap.get(ADLS_HOME_MOUNTPOINT);
             }
-            return new ADLSStorageAccount(this, accountName, true, defaultRootPath, clusterIdentity);
+
+            return URI.create(String.format("%s://%s.azuredatalakestore.net", scheme, accountName))
+                    .resolve(defaultRootPath)
+                    .toString();
+        } else if (Pattern.compile(StoragePathInfo.BlobPathPattern).matcher(containerAddress).matches()
+                || Pattern.compile(StoragePathInfo.AdlsGen2PathPattern).matcher(containerAddress).matches()) {
+            return containerAddress;
         } else {
-            String storageAccountName = getStorageAccountName(containerAddress);
-            if(storageAccountName == null){
-                throw new HDIException("Failed to get default storage account name");
-            }
+            final Map<String, String> properties = new HashMap<>();
+            properties.put("ErrorType", "Unknown HDInsight default storage type");
+            properties.put("coreSiteMap", StringUtils.join(requestedCoresiteMap));
+            properties.put("containerAddress", containerAddress);
+            properties.put("ClusterID", this.clusterRawInfo.getId());
+            AppInsightsClient.createByType(AppInsightsClient.EventType.Error, this.getClass().getSimpleName(), null, properties);
 
-            String defaultContainerName = getDefaultContainerName(containerAddress);
+            return null;
+        }
+    }
 
-            String keyNameOfDefaultStorageAccountKey = StorageAccountKeyPrefix + storageAccountName;
-            String storageAccountKey = null;
-            if(coresiteMap.containsKey(keyNameOfDefaultStorageAccountKey)){
-                storageAccountKey = coresiteMap.get(keyNameOfDefaultStorageAccountKey);
-            }
+    @Nullable
+    private IHDIStorageAccount getDefaultStorageAccount(Map<String, String> coresiteMap, ClusterIdentity clusterIdentity) throws HDIException {
+        String defaultStorageRootPath = getDefaultStorageRootPath();
+        if (defaultStorageRootPath == null) {
+            throw new HDIException("Failed to get default storage root path");
+        }
 
-            if(storageAccountKey == null){
-                throw new HDIException("Failed to get default storage account key");
-            }
+        StoragePathInfo pathInfo = new StoragePathInfo(defaultStorageRootPath);
+        switch (pathInfo.storageType) {
+            case ADLS:
+                return new ADLSStorageAccount(this, true, clusterIdentity, URI.create(defaultStorageRootPath));
 
-            return new HDStorageAccount(this, storageAccountName, storageAccountKey,true, defaultContainerName);
+            case BLOB:
+                String storageAccountName = pathInfo.path.getHost();
+                if (StringUtils.isBlank(storageAccountName)) {
+                    throw new HDIException("Failed to get default storage account name");
+                }
+
+                String defaultContainerName = pathInfo.path.getUserInfo();
+                String defaultStorageAccountKey = StorageAccountKeyPrefix + storageAccountName;
+                String storageAccountKey = null;
+                if (coresiteMap.containsKey(defaultStorageAccountKey)) {
+                    storageAccountKey = coresiteMap.get(defaultStorageAccountKey);
+                }
+
+                if (storageAccountKey == null) {
+                   return null;
+                }
+
+                return new HDStorageAccount(this, storageAccountName, storageAccountKey, true, defaultContainerName);
+
+            case ADLSGen2:
+                String accountName = pathInfo.path.getHost();
+                if (StringUtils.isBlank(accountName)) {
+                    throw new HDIException("Failed to get default storage account name");
+                }
+
+                String fileSystem = pathInfo.path.getUserInfo();
+                return new ADLSGen2StorageAccount(this, accountName, null, true, fileSystem, pathInfo.path.getScheme());
+
+            default:
+                return null;
         }
     }
 
@@ -299,28 +429,6 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
         return storageAccounts;
     }
 
-    private String getStorageAccountName(String containerAddress){
-        Pattern r = Pattern.compile(StorageAccountNamePattern);
-        Matcher m = r.matcher(containerAddress);
-        if(m.find())
-        {
-            return m.group(2);
-        }
-
-        return null;
-    }
-
-    private String getDefaultContainerName(String containerAddress){
-        Pattern r = Pattern.compile(StorageAccountNamePattern);
-        Matcher m = r.matcher(containerAddress);
-        if(m.find())
-        {
-            return m.group(1);
-        }
-
-        return null;
-    }
-
     public String getLivyConnectionUrl() {
         return URI.create(getConnectionUrl()).resolve("livy/").toString();
     }
@@ -329,4 +437,39 @@ public class ClusterDetail implements IClusterDetail, LivyCluster, YarnCluster {
         return URI.create(getConnectionUrl()).resolve("yarnui/ws/v1/cluster/apps/").toString();
     }
 
+    @Override
+    public SparkSubmitStorageType getDefaultStorageType() {
+        SparkSubmitStorageType type = getStorageOptionsType().getOptionTypes().length == 0
+                ? null
+                : getStorageOptionsType().getOptionTypes()[0];
+        return type;
+    }
+
+    @Override
+    public SparkSubmitStorageTypeOptionsForCluster getStorageOptionsType() {
+        StorageAccountType type = StorageAccountType.UNKNOWN;
+
+        if (getStorageAccount() == null) {
+            try {
+                getConfigurationInfo();
+            } catch (IOException | HDIException | AzureCmdException ignored) {
+            }
+        }
+
+        if (getStorageAccount() != null) {
+            type = getStorageAccount().getAccountType();
+        }
+
+        if (isRoleTypeReader()) {
+            return SparkSubmitStorageTypeOptionsForCluster.HDInsightReaderStorageTypeOptions;
+        } else if (type == StorageAccountType.ADLS) {
+            return SparkSubmitStorageTypeOptionsForCluster.ClusterWithAdls;
+        } else if (type == StorageAccountType.BLOB) {
+            return SparkSubmitStorageTypeOptionsForCluster.ClusterWithBlob;
+        } else if(type == StorageAccountType.ADLSGen2){
+           return SparkSubmitStorageTypeOptionsForCluster.ClusterWithAdlsGen2;
+        } else {
+            return SparkSubmitStorageTypeOptionsForCluster.ClusterWithUnknown;
+        }
+    }
 }

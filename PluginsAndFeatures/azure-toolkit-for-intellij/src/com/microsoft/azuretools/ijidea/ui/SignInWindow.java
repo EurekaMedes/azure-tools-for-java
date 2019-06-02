@@ -22,6 +22,11 @@
 
 package com.microsoft.azuretools.ijidea.ui;
 
+import static com.microsoft.azuretools.telemetry.TelemetryConstants.ACCOUNT;
+import static com.microsoft.azuretools.telemetry.TelemetryConstants.SIGNIN;
+import static com.microsoft.azuretools.telemetry.TelemetryConstants.signInDCProp;
+import static com.microsoft.azuretools.telemetry.TelemetryConstants.signInSPProp;
+
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
@@ -44,13 +49,17 @@ import com.microsoft.azuretools.authmanage.interact.AuthMethod;
 import com.microsoft.azuretools.authmanage.models.AuthMethodDetails;
 import com.microsoft.azuretools.authmanage.models.SubscriptionDetail;
 import com.microsoft.azuretools.sdkmanage.AccessTokenAzureManager;
+import com.microsoft.azuretools.telemetrywrapper.ErrorType;
+import com.microsoft.azuretools.telemetrywrapper.EventType;
+import com.microsoft.azuretools.telemetrywrapper.EventUtil;
+import com.microsoft.azuretools.telemetrywrapper.Operation;
+import com.microsoft.azuretools.telemetrywrapper.TelemetryManager;
 import com.microsoft.intellij.ui.components.AzureDialogWrapper;
 import org.jdesktop.swingx.JXHyperlink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.net.URI;
@@ -139,11 +148,7 @@ public class SignInWindow extends AzureDialogWrapper {
             }
         });
 
-        Font labelFont = UIManager.getFont("Label.font");
-
-        deviceLoginRadioButton.setVisible(CommonSettings.getDeviceLoginEnabled());
-        deviceLoginCommentLabel.setVisible(CommonSettings.getDeviceLoginEnabled());
-        interactiveRadioButton.setSelected(true);
+        deviceLoginRadioButton.setSelected(true);
         refreshAuthControlElements();
 
         init();
@@ -175,9 +180,9 @@ public class SignInWindow extends AzureDialogWrapper {
         FileChooserDescriptor fileDescriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("azureauth");
         fileDescriptor.setTitle("Select Authentication File");
         final VirtualFile file = FileChooser.chooseFile(
-                fileDescriptor,
-                this.project,
-                LocalFileSystem.getInstance().findFileByPath(System.getProperty("user.home"))
+            fileDescriptor,
+            this.project,
+            LocalFileSystem.getInstance().findFileByPath(System.getProperty("user.home"))
         );
         if (file != null) {
             authFileTextField.setText(file.getPath());
@@ -199,17 +204,24 @@ public class SignInWindow extends AzureDialogWrapper {
     }
 
     private void deviceLoginAsync(@NotNull final DCAuthManager dcAuthManager) {
+        Operation operation = TelemetryManager.createOperation(ACCOUNT, SIGNIN);
         ProgressManager.getInstance().run(
             new Task.Modal(project, "Sign In Progress", false) {
                 @Override
                 public void run(ProgressIndicator indicator) {
                     try {
+                        EventUtil.logEvent(EventType.info, operation, signInDCProp);
+                        operation.start();
                         dcAuthManager.deviceLogin(null);
                     } catch (AuthCanceledException ex) {
+                        EventUtil.logError(operation, ErrorType.userError, ex, signInDCProp, null);
                         System.out.println(ex.getMessage());
                     } catch (Exception ex) {
+                        EventUtil.logError(operation, ErrorType.userError, ex, signInDCProp, null);
                         ApplicationManager.getApplication().invokeLater(
                             () -> ErrorWindow.show(project, ex.getMessage(), SIGN_IN_ERROR));
+                    } finally {
+                        operation.complete();
                     }
                 }
             });
@@ -245,7 +257,17 @@ public class SignInWindow extends AzureDialogWrapper {
                         ApplicationManager.getApplication().invokeLater(new Runnable() {
                             @Override
                             public void run() {
-                                ErrorWindow.show(project, ex.getMessage(), SIGN_IN_ERROR);
+                                // To revert after Device Flow is stable.
+                                ErrorWindow.show(project, ex.getMessage(), SIGN_IN_ERROR, "Try Device Flow", () -> {
+                                    authMethodDetailsResult = new AuthMethodDetails();
+                                    doDeviceLogin();
+                                    if (!StringUtils.isNullOrEmpty(accountEmail)) {
+                                        authMethodDetailsResult.setAuthMethod(AuthMethod.DC);
+                                        authMethodDetailsResult.setAccountEmail(accountEmail);
+                                        authMethodDetailsResult.setAzureEnv(CommonSettings.getEnvironment().getName());
+                                        SignInWindow.super.doOKAction();
+                                    }
+                                });
                             }
                         });
                     }
@@ -265,16 +287,16 @@ public class SignInWindow extends AzureDialogWrapper {
     }
 
     private void doCreateServicePrincipal() {
-        AdAuthManager adAuthManager = null;
+        DCAuthManager dcAuthManager = null;
         try {
-            adAuthManager = AdAuthManager.getInstance();
-            if (adAuthManager.isSignedIn()) {
-                adAuthManager.signOut();
+            dcAuthManager = DCAuthManager.getInstance();
+            if (dcAuthManager.isSignedIn()) {
+                dcAuthManager.signOut();
             }
 
-            signInAsync();
+            doDeviceLogin();
 
-            if (!adAuthManager.isSignedIn()) {
+            if (!dcAuthManager.isSignedIn()) {
                 // canceled by the user
                 System.out.println(">> Canceled by the user");
                 return;
@@ -331,7 +353,7 @@ public class SignInWindow extends AzureDialogWrapper {
                 }
             }
 
-            SrvPriCreationStatusDialog  d1 = SrvPriCreationStatusDialog.go(tidSidsMap, destinationFolder, project);
+            SrvPriCreationStatusDialog d1 = SrvPriCreationStatusDialog.go(tidSidsMap, destinationFolder, project);
             if (d1 == null) {
                 System.out.println(">> Canceled by the user");
                 return;
@@ -351,10 +373,10 @@ public class SignInWindow extends AzureDialogWrapper {
             ErrorWindow.show(project, ex.getMessage(), "Get Subscription Error");
 
         } finally {
-            if (adAuthManager != null) {
+            if (dcAuthManager != null) {
                 try {
                     System.out.println(">> Signing out...");
-                    adAuthManager.signOut();
+                    dcAuthManager.signOut();
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -381,6 +403,7 @@ public class SignInWindow extends AzureDialogWrapper {
             authMethodDetailsResult.setAccountEmail(accountEmail);
             authMethodDetailsResult.setAzureEnv(CommonSettings.getEnvironment().getName());
         } else if (automatedRadioButton.isSelected()) { // automated
+            EventUtil.logEvent(EventType.info, ACCOUNT, SIGNIN, signInSPProp, null);
             String authPath = authFileTextField.getText();
             if (StringUtils.isNullOrWhiteSpace(authPath)) {
                 JOptionPane.showMessageDialog(

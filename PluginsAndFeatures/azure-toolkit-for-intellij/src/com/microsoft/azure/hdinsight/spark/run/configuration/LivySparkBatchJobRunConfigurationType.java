@@ -25,36 +25,34 @@ import com.intellij.execution.configurations.ConfigurationFactory;
 import com.intellij.execution.configurations.ConfigurationType;
 import com.intellij.execution.configurations.ConfigurationTypeUtil;
 import com.microsoft.azure.hdinsight.common.CommonConst;
+import com.microsoft.azure.hdinsight.common.IconPathBuilder;
 import com.microsoft.azuretools.azurecommons.helpers.NotNull;
 import com.microsoft.intellij.util.PluginUtil;
 
 import javax.swing.*;
 
 public class LivySparkBatchJobRunConfigurationType implements ConfigurationType {
-
-    private static final String DISPLAY_NAME = "Azure HDInsight Spark";
-    private static final String ID = "SubmitSparkJob_Configuration";
-    private static final String DESCRIPTION = "Azure HDInsight Spark Job Configuration Type";
-
     @Override
     public String getDisplayName() {
-        return DISPLAY_NAME;
+        return "Apache Spark on HDInsight";
     }
 
     @Override
     public String getConfigurationTypeDescription() {
-        return DESCRIPTION;
+        return "Spark on HDInsight Run Configuration";
     }
 
     @Override
     public Icon getIcon() {
-        return PluginUtil.getIcon(CommonConst.OpenSparkUIIconPath);
+        return PluginUtil.getIcon(IconPathBuilder
+                .custom(CommonConst.OpenSparkUIIconName)
+                .build());
     }
 
     @NotNull
     @Override
     public String getId() {
-        return ID;
+        return "SubmitSparkJob_Configuration";
     }
 
     @Override

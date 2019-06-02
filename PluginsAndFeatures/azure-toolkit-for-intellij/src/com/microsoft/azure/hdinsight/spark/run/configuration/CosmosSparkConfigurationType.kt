@@ -24,17 +24,18 @@ package com.microsoft.azure.hdinsight.spark.run.configuration
 
 import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.ConfigurationType
+import com.intellij.execution.configurations.ConfigurationTypeUtil
 import com.microsoft.azure.hdinsight.common.CommonConst
 import com.microsoft.intellij.util.PluginUtil
 import javax.swing.Icon
 
-open class CosmosSparkConfigurationType : ConfigurationType {
+object CosmosSparkConfigurationType : ConfigurationType {
     override fun getIcon(): Icon {
         return PluginUtil.getIcon("/icons/${CommonConst.AZURE_SERVERLESS_SPARK_ROOT_ICON_PATH}")
     }
 
     override fun getConfigurationTypeDescription(): String {
-        return "Cosmos ADL Spark Job Configuration"
+        return "Spark on Cosmos Run Configuration"
     }
 
     override fun getId(): String {
@@ -42,7 +43,7 @@ open class CosmosSparkConfigurationType : ConfigurationType {
     }
 
     override fun getDisplayName(): String {
-        return "Azure Data Lake Spark Pool"
+        return "Apache Spark on Cosmos"
     }
 
     override fun getConfigurationFactories(): Array<ConfigurationFactory> {

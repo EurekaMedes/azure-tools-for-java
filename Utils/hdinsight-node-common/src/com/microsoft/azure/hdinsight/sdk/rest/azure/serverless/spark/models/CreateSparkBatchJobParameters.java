@@ -27,6 +27,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.microsoft.azure.hdinsight.spark.common.SparkSubmissionParameter;
 
+import java.util.Map;
+
 /**
  * To leverage Livy(HDInsight) Spark Batch Job codes, some fields are commented
  * since they can be inherited from the base class SparkSubmissionParameter
@@ -35,6 +37,14 @@ import com.microsoft.azure.hdinsight.spark.common.SparkSubmissionParameter;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CreateSparkBatchJobParameters extends SparkSubmissionParameter {
+    public static final String DriverMemoryDefaultValue = "12G";
+
+    public static final int DriverCoresDefaultValue = 4;
+
+    public static final String ExecutorMemoryDefaultValue = "12G";
+
+    public static final int ExecutorCoresDefaultValue = 4;
+
     @JsonIgnoreProperties
     private String adlAccountName;
 
@@ -119,14 +129,20 @@ public class CreateSparkBatchJobParameters extends SparkSubmissionParameter {
     /**
      * Name of the session.
      */
-    @JsonProperty(value = "name", required = true)
-    private String name;
+//    @JsonProperty(value = "name", required = true)
+//    private String name;
 
     /**
      * Spark Configuration Properties.
      */
 //    @JsonProperty(value = "conf")
 //    private Map<String, String> conf;
+
+    /**
+     * Special properties that will allow choosing/targeting of features (runtime, gp version etc) on server side.
+     */
+    @JsonProperty(value = "extendedProperties")
+    private Map<String, String> extendedProperties;
 
     public String adlAccountName() {
         return adlAccountName;
@@ -402,9 +418,9 @@ public class CreateSparkBatchJobParameters extends SparkSubmissionParameter {
      *
      * @return the name value
      */
-    public String name() {
-        return this.name;
-    }
+//    public String name() {
+//        return this.name;
+//    }
 
     /**
      * Set name of the session.
@@ -412,10 +428,10 @@ public class CreateSparkBatchJobParameters extends SparkSubmissionParameter {
      * @param name the name value to set
      * @return the CreateSparkBatchJobParameters object itself.
      */
-    public CreateSparkBatchJobParameters withName(String name) {
-        this.name = name;
-        return this;
-    }
+//    public CreateSparkBatchJobParameters withName(String name) {
+//        this.name = name;
+//        return this;
+//    }
 
     /**
      * Get spark Configuration Properties.
@@ -437,4 +453,23 @@ public class CreateSparkBatchJobParameters extends SparkSubmissionParameter {
 //        return this;
 //    }
 
+    /**
+     * Get special properties that will allow choosing/targeting of features (runtime, gp version etc) on server side.
+     *
+     * @return the extendedProperties value
+     */
+    public Map<String, String> extendedProperties() {
+        return this.extendedProperties;
+    }
+
+    /**
+     * Set special properties that will allow choosing/targeting of features (runtime, gp version etc) on server side.
+     *
+     * @param extendedProperties the extendedProperties value to set
+     * @return the CreateSparkBatchJobParameters object itself.
+     */
+    public CreateSparkBatchJobParameters withExtendedProperties(Map<String, String> extendedProperties) {
+        this.extendedProperties = extendedProperties;
+        return this;
+    }
 }

@@ -21,6 +21,8 @@
  */
 package com.microsoft.azure.hdinsight.common;
 
+import static com.microsoft.azuretools.telemetry.TelemetryConstants.HDINSIGHT;
+
 import com.intellij.ide.ui.UISettings;
 import com.intellij.ide.ui.UISettingsListener;
 import com.intellij.openapi.application.ApplicationManager;
@@ -31,9 +33,9 @@ import com.microsoft.azure.hdinsight.sdk.cluster.IClusterDetail;
 import com.microsoft.azure.hdinsight.sdk.cluster.LivyCluster;
 import com.microsoft.azure.hdinsight.sdk.common.HttpResponse;
 import com.microsoft.azure.hdinsight.spark.common.SparkBatchSubmission;
-import com.microsoft.azure.hdinsight.spark.common.SparkSubmitHelper;
-import com.microsoft.azure.hdinsight.spark.jobs.JobUtils;
 import com.microsoft.azuretools.telemetry.AppInsightsClient;
+import com.microsoft.azuretools.telemetrywrapper.EventType;
+import com.microsoft.azuretools.telemetrywrapper.EventUtil;
 import com.microsoft.intellij.IToolWindowProcessor;
 import com.microsoft.intellij.hdinsight.messages.HDInsightBundle;
 import com.microsoft.intellij.util.PluginUtil;
@@ -115,6 +117,8 @@ public class SparkSubmissionToolWindowProcessor implements IToolWindowProcessor 
                     public void run() {
                         if (clusterDetail != null) {
                             AppInsightsClient.create(HDInsightBundle.message("SparkSubmissionStopButtionClickEvent"), null);
+                            EventUtil.logEvent(EventType.info, HDINSIGHT,
+                                HDInsightBundle.message("SparkSubmissionStopButtionClickEvent"), null);
                             try {
                                 String livyUrl = clusterDetail instanceof LivyCluster ? ((LivyCluster) clusterDetail).getLivyBatchUrl() : null;
                                 HttpResponse deleteResponse = SparkBatchSubmission.getInstance().killBatchJob(livyUrl, batchId);
@@ -134,7 +138,10 @@ public class SparkSubmissionToolWindowProcessor implements IToolWindowProcessor 
         });
 
 
-        openSparkUIButton = new JButton(PluginUtil.getIcon(CommonConst.OpenSparkUIIconPath));
+        openSparkUIButton = new JButton(
+                PluginUtil.getIcon(IconPathBuilder
+                        .custom(CommonConst.OpenSparkUIIconName)
+                        .build()));
         openSparkUIButton.setDisabledIcon(PluginUtil.getIcon(CommonConst.OpenSparkUIDisableIconPath));
         openSparkUIButton.setEnabled(false);
         openSparkUIButton.setToolTipText("open the corresponding Spark UI page");

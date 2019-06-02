@@ -1,5 +1,5 @@
 plugins {
-    id "org.jetbrains.intellij" version "0.3.12"
+    id "org.jetbrains.intellij" version "0.4.5"
     id "org.jetbrains.kotlin.jvm" version "1.2.50"
 }
 
@@ -73,6 +73,7 @@ repositories {
 
 configurations {
     compile.exclude module:'slf4j-api'
+    compile.exclude module:'log4j'
     cucumberRuntime {
         extendsFrom testRuntime
     }
@@ -85,20 +86,22 @@ dependencies {
     compile 'com.microsoft.sqlserver:mssql-jdbc:6.1.0.jre8'
     compile 'commons-io:commons-io:2.5'
     compile 'net.minidev:json-smart:2.3'
-    compile 'com.microsoft.azure:azure-client-runtime:1.6.3', { force = true }
-    compile 'com.microsoft.azure:azure-client-authentication:1.6.3', { force = true }
-    compile 'com.microsoft.azuretools:azuretools-core:3.14.0', {
+    compile 'com.microsoft.azure:azure-client-runtime:1.6.5', { force = true }
+    compile 'com.microsoft.azure:azure-client-authentication:1.6.5', { force = true }
+    compile 'com.microsoft.azuretools:azuretools-core:3.23.0', {
         exclude group: "com.microsoft.azure", module: "azure-client-authentication"
         exclude group: "com.microsoft.azure", module: "azure-client-runtime"
+        exclude group: "javax.xml.bind", module: "jaxb-api"
     }
-    compile 'com.microsoft.azuretools:azure-explorer-common:3.14.0', {
+    compile 'com.microsoft.azuretools:azure-explorer-common:3.23.0', {
         exclude group: "com.microsoft.azure", module: "azure-client-authentication"
         exclude group: "com.microsoft.azure", module: "azure-client-runtime"
+        exclude group: "javax.xml.bind", module: "jaxb-api"
     }
-    compile 'com.microsoft.azuretools:spark-tools:0.1.0'
-    compile 'com.microsoft.azuretools:hdinsight-node-common:3.14.0', {
+    compile 'com.microsoft.azuretools:hdinsight-node-common:3.23.0', {
         exclude group: "com.microsoft.azure", module: "azure-client-authentication"
         exclude group: "com.microsoft.azure", module: "azure-client-runtime"
+        exclude group: "javax.xml.bind", module: "jaxb-api"
     }
     compile 'com.spotify:docker-client:8.11.7'
 
@@ -136,6 +139,8 @@ task cucumberPackJar(type: Jar) {
         }
     }
 }
+
+buildSearchableOptions.onlyIf {false}
 
 task cucumber() {
     dependsOn compileTestJava, cucumberPackJar

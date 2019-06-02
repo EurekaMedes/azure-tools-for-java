@@ -25,19 +25,18 @@ package com.microsoft.azure.hdinsight.spark.run
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.RunProfile
 import com.microsoft.azure.hdinsight.common.MessageInfoType
-import com.microsoft.azure.hdinsight.sdk.common.azure.serverless.AzureSparkServerlessClusterManager
+import com.microsoft.azure.hdinsight.sdk.common.azure.serverless.AzureSparkCosmosClusterManager
 import com.microsoft.azure.hdinsight.sdk.rest.azure.serverless.spark.models.CreateSparkBatchJobParameters
 import com.microsoft.azure.hdinsight.spark.common.*
+import com.microsoft.azure.hdinsight.spark.run.configuration.CosmosServerlessSparkConfiguration
 import org.apache.commons.lang3.exception.ExceptionUtils
 import rx.Observer
 import java.io.IOException
-import java.util.AbstractMap
+import java.util.*
 
 class CosmosServerlessSparkBatchRunner : SparkBatchJobRunner() {
     override fun canRun(executorId: String, profile: RunProfile): Boolean {
-//        FIXME: should be as below
-//        return SparkBatchJobRunExecutor.EXECUTOR_ID == executorId && profile is CosmosServerlessSparkRunConfiguration
-        return SparkBatchJobRunExecutor.EXECUTOR_ID == executorId
+        return SparkBatchJobRunExecutor.EXECUTOR_ID == executorId && profile.javaClass == CosmosServerlessSparkConfiguration::class.java
     }
 
     override fun getRunnerId(): String {
@@ -47,9 +46,9 @@ class CosmosServerlessSparkBatchRunner : SparkBatchJobRunner() {
     @Throws(ExecutionException::class)
     override fun buildSparkBatchJob(submitModel: SparkSubmitModel, ctrlSubject: Observer<AbstractMap.SimpleImmutableEntry<MessageInfoType, String>>): ISparkBatchJob {
         val submissionParameter = submitModel.submissionParameter as CreateSparkBatchJobParameters
-        val adlAccountName = submissionParameter.adlAccountName()
-        val account = AzureSparkServerlessClusterManager.getInstance().getAccountByName(adlAccountName)
-        account ?: throw ExecutionException("Can't find ADLA account '$adlAccountName'")
+        val adlAccountName = submissionParameter.clusterName
+        val account = AzureSparkCosmosClusterManager.getInstance().getAccountByName(adlAccountName)
+                ?: throw ExecutionException("Can't find ADLA account '$adlAccountName'")
 
         val accessToken = try {
             account.http.accessToken

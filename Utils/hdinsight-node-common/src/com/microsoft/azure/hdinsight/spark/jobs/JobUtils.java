@@ -41,13 +41,14 @@ import com.microsoft.azure.hdinsight.sdk.cluster.IClusterDetail;
 import com.microsoft.azure.hdinsight.sdk.cluster.LivyCluster;
 import com.microsoft.azure.hdinsight.sdk.common.AuthenticationException;
 import com.microsoft.azure.hdinsight.sdk.common.HDIException;
+import com.microsoft.azure.hdinsight.sdk.common.HttpObservable;
 import com.microsoft.azure.hdinsight.sdk.common.livy.interactive.SparkSession;
 import com.microsoft.azure.hdinsight.sdk.io.spark.ClusterFileBase64BufferedOutputStream;
 import com.microsoft.azure.hdinsight.sdk.rest.yarn.rm.App;
 import com.microsoft.azure.hdinsight.sdk.rest.yarn.rm.ApplicationMasterLogs;
 import com.microsoft.azure.hdinsight.sdk.storage.HDStorageAccount;
 import com.microsoft.azure.hdinsight.sdk.storage.IHDIStorageAccount;
-import com.microsoft.azure.hdinsight.sdk.storage.StorageAccountTypeEnum;
+import com.microsoft.azure.hdinsight.sdk.storage.StorageAccountType;
 import com.microsoft.azure.hdinsight.sdk.storage.webhdfs.WebHdfsParamsBuilder;
 import com.microsoft.azure.hdinsight.spark.common.SparkBatchSubmission;
 import com.microsoft.azure.hdinsight.spark.jobs.livy.LivyBatchesInformation;
@@ -89,7 +90,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import rx.Observable;
 import rx.Observer;
-import rx.*;
+import rx.Single;
+import rx.Subscription;
 import rx.schedulers.Schedulers;
 
 import java.awt.*;
@@ -100,8 +102,8 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.UnknownServiceException;
 import java.util.*;
-import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.List;
+import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -256,6 +258,7 @@ public class JobUtils {
                                                       long start,
                                                       int size) {
         final WebClient HTTP_WEB_CLIENT = new WebClient(BrowserVersion.CHROME);
+        HTTP_WEB_CLIENT.getOptions().setUseInsecureSSL(HttpObservable.isSSLCertificateValidationDisabled());
         HTTP_WEB_CLIENT.setCache(globalCache);
 
         if (credentialsProvider != null) {
@@ -426,7 +429,7 @@ public class JobUtils {
     }
 
     @Nullable
-    private static BlobContainer getSparkClusterDefaultContainer(ClientStorageAccount storageAccount, String dealtContainerName) throws AzureCmdException {
+    private static BlobContainer getSparkClusterContainer(ClientStorageAccount storageAccount, String dealtContainerName) throws AzureCmdException {
         List<BlobContainer> containerList = StorageClientSDKManager.getManager().getBlobContainers(storageAccount.getConnectionString());
         for (BlobContainer container : containerList) {
             if (container.getName().toLowerCase().equals(dealtContainerName.toLowerCase())) {
@@ -440,22 +443,21 @@ public class JobUtils {
     @Deprecated
     public static String uploadFileToAzure(@NotNull File file,
                                            @NotNull IHDIStorageAccount storageAccount,
-                                           @NotNull String defaultContainerName,
+                                           @NotNull String containerName,
                                            @NotNull String uploadFolderPath,
                                            @NotNull Observer<SimpleImmutableEntry<MessageInfoType, String>> logSubject,
                                            @Nullable CallableSingleArg<Void, Long> uploadInProcessCallback) throws Exception {
-        if(storageAccount.getAccountType() == StorageAccountTypeEnum.BLOB) {
+        if(storageAccount.getAccountType() == StorageAccountType.BLOB) {
             try (FileInputStream fileInputStream = new FileInputStream(file)) {
                 try (BufferedInputStream bufferedInputStream = new BufferedInputStream(fileInputStream)) {
                     HDStorageAccount blobStorageAccount = (HDStorageAccount) storageAccount;
-                    BlobContainer defaultContainer = getSparkClusterDefaultContainer(blobStorageAccount, defaultContainerName);
-
-                    if (defaultContainer == null) {
-                        throw new UnsupportedOperationException("Can't get the default container.");
+                    BlobContainer container = getSparkClusterContainer(blobStorageAccount, containerName);
+                    if (container == null) {
+                        throw new IllegalArgumentException("Can't get the valid container.");
                     }
 
                     String path = String.format("SparkSubmission/%s/%s", uploadFolderPath, file.getName());
-                    String uploadedPath = String.format("wasbs://%s@%s/%s", defaultContainerName, blobStorageAccount.getFullStorageBlobName(), path);
+                    String uploadedPath = String.format("wasbs://%s@%s/%s", containerName, blobStorageAccount.getFullStorageBlobName(), path);
 
                     logSubject.onNext(new SimpleImmutableEntry<>(Info,
                             String.format("Begin uploading file %s to Azure Blob Storage Account %s ...",
@@ -463,7 +465,7 @@ public class JobUtils {
 
                     StorageClientSDKManager.getManager().uploadBlobFileContent(
                             blobStorageAccount.getConnectionString(),
-                            defaultContainer,
+                            container,
                             path,
                             bufferedInputStream,
                             uploadInProcessCallback,
@@ -476,7 +478,7 @@ public class JobUtils {
                     return uploadedPath;
                 }
             }
-        } else if(storageAccount.getAccountType() == StorageAccountTypeEnum.ADLS) {
+        } else if(storageAccount.getAccountType() == StorageAccountType.ADLS) {
             String uploadPath = String.format("adl://%s.azuredatalakestore.net%s%s", storageAccount.getName(), storageAccount.getDefaultContainerOrRootPath(), "SparkSubmission");
             logSubject.onNext(new SimpleImmutableEntry<>(Info,
                               String.format("Begin uploading file %s to Azure Datalake store %s ...", file.getPath(), uploadPath)));
@@ -681,7 +683,9 @@ public class JobUtils {
 
                 ob.onSuccess(new SimpleImmutableEntry<>(clusterDetail, jobArtifactUri));
             } catch (Exception e) {
-                ob.onError(e);
+                // filenotfound exp is wrapped in RuntimeException(HDIExpception) , refer to #2653
+                Throwable cause = e instanceof RuntimeException ? e.getCause() : e;
+                ob.onError(cause);
             }
         });
     }

@@ -31,8 +31,19 @@ import com.microsoft.aad.adal4j.AuthenticationException;
 import com.microsoft.aad.adal4j.AuthenticationResult;
 import com.microsoft.aad.adal4j.DeviceCode;
 import com.microsoft.intellij.ui.components.AzureDialogWrapper;
+import org.apache.log4j.Level;
+import org.apache.log4j.Logger;
 import org.jetbrains.annotations.Nullable;
+
+import javax.swing.JComponent;
+import javax.swing.JEditorPane;
+import javax.swing.JPanel;
+import javax.swing.UIManager;
+import javax.swing.event.HyperlinkEvent;
+import javax.swing.text.html.HTMLDocument;
+import java.awt.Color;
 import java.awt.Desktop;
+import java.awt.Font;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.datatransfer.Clipboard;
@@ -43,10 +54,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import javax.swing.JComponent;
-import javax.swing.JEditorPane;
-import javax.swing.JPanel;
-import javax.swing.event.HyperlinkEvent;
 
 public class DeviceLoginWindow extends AzureDialogWrapper {
     private static final String TITLE = "Azure Device Login";
@@ -67,6 +74,7 @@ public class DeviceLoginWindow extends AzureDialogWrapper {
         this.deviceCode = deviceCode;
         setModal(true);
         setTitle(TITLE);
+        editorPanel.setBackground(jPanel.getBackground());
         editorPanel.setText(createHtmlFormatMessage());
         editorPanel.addHyperlinkListener(e -> {
             if (e.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
@@ -77,6 +85,15 @@ public class DeviceLoginWindow extends AzureDialogWrapper {
                 }
             }
         });
+        // Apply JLabel's font and color to JEditorPane
+        final Font font = UIManager.getFont("Label.font");
+        final Color foregroundColor = UIManager.getColor("Label.foreground");
+        editorPanel.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        if (font != null && foregroundColor != null) {
+            editorPanel.setFont(font);
+            editorPanel.setForeground(foregroundColor);
+        }
+
         authExecutor = ApplicationManager.getApplication()
             .executeOnPooledThread(() -> pullAuthenticationResult(ctx, deviceCode, callBack));
         init();
@@ -86,20 +103,29 @@ public class DeviceLoginWindow extends AzureDialogWrapper {
                                           final AuthenticationCallback<AuthenticationResult> callback) {
         final long interval = deviceCode.getInterval();
         long remaining = deviceCode.getExpiresIn();
-        while (remaining > 0 && authenticationResult == null) {
-            try {
-                remaining -= interval;
-                Thread.sleep(interval * 1000);
-                authenticationResult = ctx.acquireTokenByDeviceCode(deviceCode, callback).get();
-            } catch (ExecutionException | InterruptedException e) {
-                if (e.getCause() instanceof AuthenticationException &&
-                    ((AuthenticationException) e.getCause()).getErrorCode() == AdalErrorCode.AUTHORIZATION_PENDING) {
-                    // swallow the pending exception
-                } else {
-                    e.printStackTrace();
-                    break;
+        // Close adal logger for it will write useless error log
+        // for issue #2368 https://github.com/Microsoft/azure-tools-for-java/issues/2368
+        Logger authLogger = Logger.getLogger(AuthenticationContext.class);
+        Level authLoggerLevel = authLogger.getLevel();
+        authLogger.setLevel(Level.OFF);
+        try {
+            while (remaining > 0 && authenticationResult == null) {
+                try {
+                    remaining -= interval;
+                    Thread.sleep(interval * 1000);
+                    authenticationResult = ctx.acquireTokenByDeviceCode(deviceCode, callback).get();
+                } catch (ExecutionException | InterruptedException e) {
+                    if (e.getCause() instanceof AuthenticationException &&
+                        ((AuthenticationException) e.getCause()).getErrorCode() == AdalErrorCode.AUTHORIZATION_PENDING) {
+                        // swallow the pending exception
+                    } else {
+                        e.printStackTrace();
+                        break;
+                    }
                 }
             }
+        } finally {
+            authLogger.setLevel(authLoggerLevel);
         }
         closeDialog();
     }

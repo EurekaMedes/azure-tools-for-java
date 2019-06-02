@@ -21,7 +21,10 @@
  */
 package com.microsoft.azure.hdinsight.common.classifiedexception
 
+import com.microsoft.azure.datalake.store.ADLException
+import com.microsoft.azure.hdinsight.spark.common.SparkJobException
 import com.microsoft.azure.hdinsight.spark.common.YarnDiagnosticsException
+import java.io.FileNotFoundException
 
 class SparkUserException(exp: Throwable?) : ClassifiedException(exp) {
     override val title: String = "Spark User Error"
@@ -32,6 +35,15 @@ class SparkUserException(exp: Throwable?) : ClassifiedException(exp) {
 
 object SparkUserExceptionFactory : ClassifiedExceptionFactory() {
     override fun createClassifiedException(exp: Throwable?): ClassifiedException? {
-        return if (exp is YarnDiagnosticsException) SparkUserException(exp) else null
+        return if (exp is YarnDiagnosticsException
+                // Throw from wrong class name ,refer to issue 1827 and 2466
+                || exp is SparkJobException
+                || exp is IllegalArgumentException
+                || exp is FileNotFoundException) {
+            SparkUserException(exp)
+        } else if (exp is ADLException && exp.httpResponseCode == 403) {
+            val hintMsg = "\nPlease make sure user has RWX permissions for the storage account"
+            SparkUserException(ADLException("${exp.remoteExceptionMessage}$hintMsg"))
+        } else null
     }
 }

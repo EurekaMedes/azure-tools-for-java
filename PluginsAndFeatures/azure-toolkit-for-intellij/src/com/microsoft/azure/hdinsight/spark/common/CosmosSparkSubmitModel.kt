@@ -38,7 +38,10 @@ open class CosmosSparkSubmitModel : SparkSubmitModel {
     var livyUri: String? = null
 
     constructor() : super()
+
     constructor(project: Project) : super(project)
+
+    constructor(project: Project, submissionParameter: SparkSubmissionParameter): super(project, submissionParameter)
 
     override fun getDefaultParameters(): Stream<Pair<String, out Any>> {
         return listOf(
@@ -47,4 +50,6 @@ open class CosmosSparkSubmitModel : SparkSubmitModel {
                 Pair(SparkSubmissionParameter.ExecutorMemory, SparkSubmissionParameter.ExecutorMemoryDefaultValue),
                 Pair(SparkSubmissionParameter.ExecutorCores, SparkSubmissionParameter.ExecutorCoresDefaultValue)).stream()
     }
+
+    override fun getSparkClusterTypeDisplayName(): String = "Azure Data Lake Spark cluster"
 }

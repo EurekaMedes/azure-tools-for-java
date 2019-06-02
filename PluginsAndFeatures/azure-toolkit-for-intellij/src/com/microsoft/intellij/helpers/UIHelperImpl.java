@@ -24,7 +24,9 @@ package com.microsoft.intellij.helpers;
 
 import com.google.common.collect.ImmutableMap;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.fileChooser.*;
+import com.intellij.openapi.fileChooser.FileChooserFactory;
+import com.intellij.openapi.fileChooser.FileSaverDescriptor;
+import com.intellij.openapi.fileChooser.FileSaverDialog;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileTypes.FileType;
@@ -40,6 +42,8 @@ import com.microsoft.azuretools.azurecommons.helpers.AzureCmdException;
 import com.microsoft.azuretools.azurecommons.helpers.NotNull;
 import com.microsoft.azuretools.azurecommons.helpers.Nullable;
 import com.microsoft.azuretools.azurecommons.util.Utils;
+import com.microsoft.azuretools.telemetry.TelemetryConstants;
+import com.microsoft.azuretools.telemetrywrapper.EventUtil;
 import com.microsoft.intellij.AzurePlugin;
 import com.microsoft.intellij.forms.ErrorMessageForm;
 import com.microsoft.intellij.forms.OpenSSLFinderForm;
@@ -53,15 +57,15 @@ import com.microsoft.intellij.helpers.webapp.DeploymentSlotPropertyViewProvider;
 import com.microsoft.intellij.helpers.webapp.WebAppPropertyViewProvider;
 import com.microsoft.tooling.msservices.components.DefaultLoader;
 import com.microsoft.tooling.msservices.helpers.UIHelper;
+import com.microsoft.tooling.msservices.model.storage.Queue;
 import com.microsoft.tooling.msservices.model.storage.*;
 import com.microsoft.tooling.msservices.serviceexplorer.azure.container.ContainerRegistryNode;
 import com.microsoft.tooling.msservices.serviceexplorer.azure.rediscache.RedisCacheNode;
 import com.microsoft.tooling.msservices.serviceexplorer.azure.webapp.WebAppNode;
-import com.microsoft.tooling.msservices.serviceexplorer.azure.webapp.base.WebAppBaseNode;
 import com.microsoft.tooling.msservices.serviceexplorer.azure.webapp.deploymentslot.DeploymentSlotNode;
 
 import javax.swing.*;
-import java.awt.Desktop;
+import java.awt.*;
 import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -302,30 +306,33 @@ public class UIHelperImpl implements UIHelper {
 
     @Override
     public void openRedisPropertyView(@NotNull RedisCacheNode node) {
-        String redisName = node.getName() != null ? node.getName() : RedisCacheNode.TYPE;
-        String sid = node.getSubscriptionId();
-        String resId = node.getResourceId();
-        if (isSubscriptionIdAndResourceIdEmpty(sid, resId)) {
-            return;
-        }
-        Project project = (Project) node.getProject();
-        FileEditorManager fileEditorManager = FileEditorManager.getInstance(project);
-        if (fileEditorManager == null) {
-            showError(CANNOT_GET_FILE_EDITOR_MANAGER, UNABLE_TO_OPEN_EDITOR_WINDOW);
-            return;
-        }
-        LightVirtualFile itemVirtualFile = searchExistingFile(fileEditorManager, RedisCachePropertyViewProvider.TYPE, resId);
-        if (itemVirtualFile == null) {
-            itemVirtualFile = createVirtualFile(redisName, RedisCachePropertyViewProvider.TYPE,
-                    RedisCacheNode.REDISCACHE_ICON_PATH, sid, resId);
-        }
-        FileEditor[] editors = fileEditorManager.openFile(itemVirtualFile, true, true);
-        for (FileEditor editor: editors) {
-            if (editor.getName().equals(RedisCachePropertyView.ID) &&
-                    editor instanceof RedisCachePropertyView) {
-                ((RedisCachePropertyView) editor).onReadProperty(sid, resId);
+        EventUtil.executeWithLog(TelemetryConstants.REDIS, TelemetryConstants.REDIS_READPROP, (operation) -> {
+            String redisName = node.getName() != null ? node.getName() : RedisCacheNode.TYPE;
+            String sid = node.getSubscriptionId();
+            String resId = node.getResourceId();
+            if (isSubscriptionIdAndResourceIdEmpty(sid, resId)) {
+                return;
             }
-        }
+            Project project = (Project) node.getProject();
+            FileEditorManager fileEditorManager = FileEditorManager.getInstance(project);
+            if (fileEditorManager == null) {
+                showError(CANNOT_GET_FILE_EDITOR_MANAGER, UNABLE_TO_OPEN_EDITOR_WINDOW);
+                return;
+            }
+            LightVirtualFile itemVirtualFile = searchExistingFile(fileEditorManager,
+                RedisCachePropertyViewProvider.TYPE, resId);
+            if (itemVirtualFile == null) {
+                itemVirtualFile = createVirtualFile(redisName, RedisCachePropertyViewProvider.TYPE,
+                    RedisCacheNode.REDISCACHE_ICON_PATH, sid, resId);
+            }
+            FileEditor[] editors = fileEditorManager.openFile(itemVirtualFile, true, true);
+            for (FileEditor editor : editors) {
+                if (editor.getName().equals(RedisCachePropertyView.ID) &&
+                    editor instanceof RedisCachePropertyView) {
+                    ((RedisCachePropertyView) editor).onReadProperty(sid, resId);
+                }
+            }
+        });
     }
 
     @Override

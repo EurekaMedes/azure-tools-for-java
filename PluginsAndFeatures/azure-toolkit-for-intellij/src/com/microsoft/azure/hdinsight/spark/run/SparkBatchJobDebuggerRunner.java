@@ -43,12 +43,14 @@ import com.microsoft.azure.hdinsight.sdk.cluster.LivyCluster;
 import com.microsoft.azure.hdinsight.spark.common.*;
 import com.microsoft.azure.hdinsight.spark.run.configuration.LivySparkBatchJobRunConfiguration;
 import com.microsoft.azure.hdinsight.spark.ui.SparkJobLogConsoleView;
+import com.microsoft.azure.hdinsight.spark.ui.SparkSubmissionAdvancedConfigPanel;
 import com.microsoft.azuretools.azurecommons.helpers.NotNull;
 import com.microsoft.intellij.rxjava.IdeaSchedulers;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.jetbrains.concurrency.AsyncPromise;
 import org.jetbrains.concurrency.Promise;
 import rx.Observable;
+import rx.Observer;
 import rx.Subscription;
 import rx.schedulers.Schedulers;
 import rx.subjects.PublishSubject;
@@ -57,6 +59,8 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class SparkBatchJobDebuggerRunner extends GenericDebuggerRunner implements SparkSubmissionRunner {
     public static final Key<String> DebugTargetKey = new Key<>("debug-target");
@@ -132,22 +136,15 @@ public class SparkBatchJobDebuggerRunner extends GenericDebuggerRunner implement
         final IdeaSchedulers schedulers = new IdeaSchedulers(project);
         final PublishSubject<SimpleImmutableEntry<MessageInfoType, String>> ctrlSubject = PublishSubject.create();
         final PublishSubject<SparkBatchJobSubmissionEvent> debugEventSubject = PublishSubject.create();
-        final SparkBatchJobRemoteDebugProcess driverDebugProcess;
-        try {
-            driverDebugProcess = new SparkBatchJobRemoteDebugProcess(
-                    schedulers,
-                    session,
-                    SparkBatchRemoteDebugJob.factory(
-                            submitModel.getSubmissionParameter(),
-                            SparkBatchSubmission.getInstance(),
-                            ctrlSubject),
-                    submitModel.getArtifactPath().orElseThrow(() -> new ExecutionException("No artifact selected")),
-                    submitModel.getSubmissionParameter().getMainClassName(),
-                    submitModel.getAdvancedConfigModel(),
-                    ctrlSubject);
-        } catch (DebugParameterDefinedException e) {
-            throw new ExecutionException(e);
-        }
+        final SparkBatchJobRemoteDebugProcess driverDebugProcess = new SparkBatchJobRemoteDebugProcess(
+                schedulers,
+                session,
+                (ISparkBatchDebugJob) buildSparkBatchJob(submitModel, ctrlSubject),
+                submitModel.getArtifactPath().orElseThrow(() -> new ExecutionException("No artifact selected")),
+                submitModel.getSubmissionParameter().getMainClassName(),
+                submitModel.getAdvancedConfigModel(),
+                ctrlSubject);
+
         final SparkBatchJobDebugProcessHandler driverDebugHandler =
                 new SparkBatchJobDebugProcessHandler(project, driverDebugProcess, debugEventSubject);
 
@@ -233,6 +230,26 @@ public class SparkBatchJobDebuggerRunner extends GenericDebuggerRunner implement
 
                             // Prepare the debug tab console view UI
                             SparkJobLogConsoleView jobOutputView = new SparkJobLogConsoleView(project);
+                            // Get YARN container log URL port
+                            int containerLogUrlPort =
+                                    ((SparkBatchRemoteDebugJob) driverDebugProcess.getSparkJob())
+                                            .getYarnContainerLogUrlPort()
+                                            .toBlocking()
+                                            .single();
+                            // Parse container ID and host URL from driver console view
+                            jobOutputView.getSecondaryConsoleView().addMessageFilter((line, entireLength) -> {
+                                Matcher matcher = Pattern.compile(
+                                        "Launching container (\\w+).* on host ([a-zA-Z_0-9-.]+)",
+                                        Pattern.CASE_INSENSITIVE)
+                                        .matcher(line);
+                                while (matcher.find()) {
+                                    String containerId = matcher.group(1);
+                                    // TODO: get port from somewhere else rather than hard code here
+                                    URI hostUri = URI.create(String.format("http://%s:%d", matcher.group(2), containerLogUrlPort));
+                                    debugEventSubject.onNext(new SparkBatchJobExecutorCreatedEvent(hostUri, containerId));
+                                }
+                                return null;
+                            });
                             jobOutputView.attachToProcess(handlerReadyEvent.getDebugProcessHandler());
 
                             ExecutionResult result = new DefaultExecutionResult(
@@ -257,7 +274,7 @@ public class SparkBatchJobDebuggerRunner extends GenericDebuggerRunner implement
 
                             final String containerId = executorCreatedEvent.getContainerId();
                             final SparkBatchRemoteDebugJob debugJob =
-                                    (SparkBatchRemoteDebugJob) executorCreatedEvent.getJob();
+                                    (SparkBatchRemoteDebugJob) driverDebugProcess.getSparkJob();
 
                             URI internalHostUri = executorCreatedEvent.getHostUri();
                             URI executorLogUrl = debugJob.convertToPublicLogUri(internalHostUri)
@@ -270,7 +287,7 @@ public class SparkBatchJobDebuggerRunner extends GenericDebuggerRunner implement
                                             schedulers,
                                             debugJob,
                                             internalHostUri.getHost(),
-                                            executorCreatedEvent.getDebugSshSession(),
+                                            driverDebugProcess.getDebugSession(),
                                             executorLogUrl.toString());
 
                             SparkBatchJobDebugProcessHandler executorDebugHandler =
@@ -331,5 +348,34 @@ public class SparkBatchJobDebuggerRunner extends GenericDebuggerRunner implement
         childEnv.putUserData(ProfileNameKey, originProfileName);
 
         return childEnv;
+    }
+
+    @NotNull
+    @Override
+    public ISparkBatchJob buildSparkBatchJob(@NotNull SparkSubmitModel submitModel, @NotNull Observer<SimpleImmutableEntry<MessageInfoType, String>> ctrlSubject) throws ExecutionException {
+        try {
+            SparkSubmissionAdvancedConfigPanel.Companion.checkSettings(submitModel.getAdvancedConfigModel());
+            SparkSubmissionParameter debugSubmissionParameter = SparkBatchRemoteDebugJob.convertToDebugParameter(submitModel.getSubmissionParameter());
+            SparkSubmitModel debugModel = new SparkSubmitModel(submitModel.getProject(), debugSubmissionParameter,
+                    submitModel.getAdvancedConfigModel(), submitModel.getJobUploadStorageModel());
+
+            String clusterName = submitModel.getSubmissionParameter().getClusterName();
+            IClusterDetail clusterDetail = ClusterManagerEx.getInstance().getClusterDetailByName(clusterName)
+                    .orElseThrow(() -> new ExecutionException("Can't find cluster named " + clusterName));
+
+            Deployable jobDeploy = SparkBatchJobDeployFactory.getInstance().buildSparkBatchJobDeploy(debugModel, ctrlSubject);
+            return new SparkBatchRemoteDebugJob(clusterDetail, debugModel.getSubmissionParameter(), SparkBatchSubmission.getInstance(), ctrlSubject, jobDeploy);
+        } catch (DebugParameterDefinedException e) {
+            throw new ExecutionException(e);
+        }
+    }
+
+    @Override
+    public void setFocus(@NotNull RunConfiguration runConfiguration) {
+        if (runConfiguration instanceof LivySparkBatchJobRunConfiguration) {
+            LivySparkBatchJobRunConfiguration livyRunConfig = (LivySparkBatchJobRunConfiguration) runConfiguration;
+            livyRunConfig.getModel().setFocusedTabIndex(1);
+            livyRunConfig.getModel().getSubmitModel().getAdvancedConfigModel().setUIExpanded(true);
+        }
     }
 }

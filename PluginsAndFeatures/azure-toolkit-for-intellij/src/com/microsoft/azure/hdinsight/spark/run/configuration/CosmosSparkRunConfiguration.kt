@@ -24,9 +24,7 @@ package com.microsoft.azure.hdinsight.spark.run.configuration
 
 import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.RunConfiguration
-import com.intellij.openapi.module.Module
 import com.intellij.openapi.options.SettingsEditor
-import com.microsoft.azure.hdinsight.spark.common.SparkBatchJobConfigurableModel
 import com.microsoft.azure.hdinsight.spark.ui.ServerlessSparkConfigurable
 
 open class CosmosSparkRunConfiguration (name: String,
@@ -36,4 +34,6 @@ open class CosmosSparkRunConfiguration (name: String,
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> {
         return LivySparkRunConfigurationSettingsEditor(ServerlessSparkConfigurable(module.project))
     }
+
+    override fun getSuggestedNamePrefix(): String = "[Spark on Cosmos]"
 }

@@ -56,6 +56,8 @@ import com.microsoft.azuretools.azurecommons.helpers.NotNull;
 import com.microsoft.azuretools.core.mvp.model.AzureMvpModel;
 import com.microsoft.azuretools.core.mvp.model.ResourceEx;
 import com.microsoft.azuretools.utils.WebAppUtils;
+import rx.Observable;
+import rx.schedulers.Schedulers;
 
 public class AzureWebAppMvpModel {
 
@@ -513,10 +515,18 @@ public class AzureWebAppMvpModel {
      */
     public List<ResourceEx<WebApp>> listAllWebApps(final boolean force) {
         final List<ResourceEx<WebApp>> webApps = new ArrayList<>();
-        for (final Subscription sub : AzureMvpModel.getInstance().getSelectedSubscriptions()) {
-            final String sid = sub.subscriptionId();
-            webApps.addAll(listWebApps(sid, force));
+        List<Subscription> subs = AzureMvpModel.getInstance().getSelectedSubscriptions();
+        if (subs.size() == 0) {
+            return webApps;
         }
+        Observable.from(subs).flatMap((sd) ->
+            Observable.create((subscriber) -> {
+                List<ResourceEx<WebApp>> webAppList = listWebApps(sd.subscriptionId(), force);
+                synchronized (webApps) {
+                    webApps.addAll(webAppList);
+                }
+                subscriber.onCompleted();
+            }).subscribeOn(Schedulers.io()), subs.size()).subscribeOn(Schedulers.io()).toBlocking().subscribe();
         return webApps;
     }
 
@@ -587,12 +597,7 @@ public class AzureWebAppMvpModel {
      * linux runtimes, do we really need to get the values from Mvp model every time?
      */
     public List<RuntimeStack> getLinuxRuntimes() {
-        final List<RuntimeStack> runtimes = new ArrayList<>();
-        runtimes.add(RuntimeStack.TOMCAT_8_5_JRE8);
-        runtimes.add(RuntimeStack.TOMCAT_9_0_JRE8);
-        runtimes.add(RuntimeStack.WILDFLY_14_JRE8);
-        runtimes.add(RuntimeStack.JAVA_8_JRE8);
-        return runtimes;
+        return WebAppUtils.getAllJavaLinuxRuntimeStacks();
     }
 
     /**
